@@ -1,47 +1,50 @@
+# models/train/train.py
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+import torch.optim as optim
+import yaml
 from models.core.model import EnzoModel
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from models.data.dataloader import get_dataloader
 
-from models.core.model import EnzoModel
+def train():
+    # Load Config
+    with open("models/config/default.yaml", "r") as f:
+        config = yaml.safe_load(f)
 
+    device = torch.device(config['training']['device'])
+    
+    # Initialize Model, Data, Loss, and Optimizer
+    model = EnzoModel(
+        config['model']['input_dim'],
+        config['model']['hidden_dim'],
+        config['model']['output_dim']
+    ).to(device)
+    
+    dataloader = get_dataloader(config['training']['batch_size'])
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=config['model']['learning_rate'])
 
-def train(model, dataloader, tokenizer, loss_fn, optimizer, device, epochs=5, save_path="enzo.pt"):
-    model.to(device)
-
-    for epoch in range(epochs):
-        model.train()
+    # Training Loop
+    model.train()
+    for epoch in range(config['training']['epochs']):
         total_loss = 0
-
-        for batch in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch.get("attention_mask", None)
-            if attention_mask is not None:
-                attention_mask = attention_mask.to(device)
-
-            labels = input_ids.clone()
-
-            outputs = model(input_ids, attention_mask)
-            loss = loss_fn(outputs.view(-1, outputs.size(-1)), labels.view(-1))
+        for batch_data, batch_labels in dataloader:
+            batch_data, batch_labels = batch_data.to(device), batch_labels.to(device)
 
             optimizer.zero_grad()
+            predictions = model(batch_data)
+            loss = criterion(predictions, batch_labels)
+            
             loss.backward()
             optimizer.step()
-
+            
             total_loss += loss.item()
+            
+        print(f"Epoch {epoch+1}/{config['training']['epochs']} | Loss: {total_loss/len(dataloader):.4f}")
 
-        avg_loss = total_loss / len(dataloader)
-        print(f"Epoch {epoch+1} completed. Loss: {avg_loss:.4f}")
+    # Save checkpoint
+    torch.save(model.state_dict(), "models/checkpoints/enzo_v1.pt")
+    print("Training complete. Model saved to models/checkpoints/enzo_v1.pt")
 
-        torch.save(model.state_dict(), save_path)
-        print(f"Model saved to {save_path}")
-
-def load_model(vocab_size, model_path, device, **kwargs):
-    model = EnzoModel(vocab_size=vocab_size, **kwargs).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    return model
+if __name__ == "__main__":
+    train()
